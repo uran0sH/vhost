@@ -6,6 +6,7 @@ use std::path::Path;
 use std::sync::{Arc, Barrier, Mutex};
 use std::thread;
 
+use mio::Interest;
 use uuid::Uuid;
 use vhost::vhost_user::message::{
     VhostUserConfigFlags, VhostUserHeaderFlag, VhostUserInflight, VhostUserProtocolFeatures,
@@ -17,7 +18,6 @@ use vhost_user_backend::{VhostUserBackendMut, VhostUserDaemon, VringRwLock};
 use vm_memory::{
     FileOffset, GuestAddress, GuestAddressSpace, GuestMemory, GuestMemoryAtomic, GuestMemoryMmap,
 };
-use vmm_sys_util::epoll::EventSet;
 use vmm_sys_util::eventfd::EventFd;
 
 struct MockVhostBackend {
@@ -114,7 +114,7 @@ impl VhostUserBackendMut for MockVhostBackend {
     fn handle_event(
         &mut self,
         _device_event: u16,
-        _evset: EventSet,
+        _evset: Interest,
         _vrings: &[VringRwLock],
         _thread_id: usize,
     ) -> Result<()> {
