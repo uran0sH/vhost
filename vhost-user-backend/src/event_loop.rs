@@ -12,7 +12,7 @@ use std::sync::Mutex;
 
 use mio::event::Event;
 use mio::unix::SourceFd;
-use mio::{Events, Interest, Poll, Token};
+use mio::{Events, Interest, Poll, Registry, Token};
 use vmm_sys_util::eventfd::EventFd;
 
 use super::backend::VhostUserBackend;
@@ -31,6 +31,8 @@ pub enum VringPollError {
     HandleEventReadKick(io::Error),
     /// Failed to handle the event from the backend.
     HandleEventBackendHandling(io::Error),
+    /// Failed to clone registry.
+    RgistryClone(io::Error),
 }
 
 impl Display for VringPollError {
@@ -45,6 +47,7 @@ impl Display for VringPollError {
             VringPollError::HandleEventBackendHandling(e) => {
                 write!(f, "failed to handle poll event: {e}")
             }
+            VringPollError::RgistryClone(e) => write!(f, "cannot clone poller's registry: {e}"),
         }
     }
 }
@@ -104,6 +107,7 @@ fn convert_event_to_interest(value: &Event) -> Option<Interest> {
 /// - run the event loop to handle pending events on the epoll fd
 pub struct VringEpollHandler<T: VhostUserBackend> {
     poller: Mutex<Poll>,
+    registry: Registry,
     // Record which fd and interest are registered
     fd_map: Mutex<HashMap<RawFd, Vec<(Interest, u64)>>>,
     backend: T,
@@ -137,11 +141,14 @@ where
         let exit_event_fd = backend.exit_event(thread_id);
         let map = Mutex::new(HashMap::new());
 
+        let registry = poller
+            .registry()
+            .try_clone()
+            .map_err(VringPollError::RgistryClone)?;
         if let Some(exit_event_fd) = &exit_event_fd {
             let id = backend.num_queues();
 
-            poller
-                .registry()
+            registry
                 .register(
                     &mut SourceFd(&exit_event_fd.as_raw_fd()),
                     Token(id as usize),
@@ -157,6 +164,7 @@ where
 
         Ok(VringEpollHandler {
             poller: Mutex::new(poller),
+            registry,
             fd_map: map,
             backend,
             vrings,
@@ -193,10 +201,7 @@ where
     }
 
     pub(crate) fn register_event(&self, fd: RawFd, ev_type: Interest, data: u64) -> Result<()> {
-        self.poller
-            .lock()
-            .unwrap()
-            .registry()
+        self.registry
             .register(&mut SourceFd(&fd), Token(data as usize), ev_type)
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
         let mut fd_map = self.fd_map.lock().unwrap();
@@ -237,18 +242,12 @@ where
 
         if is_empty {
             fd_map.remove(&fd);
-            return self
-                .poller
-                .lock()
-                .unwrap()
-                .registry()
-                .deregister(&mut SourceFd(&fd))
-                .map_err(|e| {
-                    io::Error::new(
-                        io::ErrorKind::Other,
-                        format!("Failed to deregister fd {}: {}", fd, e),
-                    )
-                });
+            return self.registry.deregister(&mut SourceFd(&fd)).map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("Failed to deregister fd {}: {}", fd, e),
+                )
+            });
         }
         Ok(())
     }
