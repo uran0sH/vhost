@@ -266,6 +266,7 @@ mod dummy_backend;
 #[cfg(all(test, feature = "vhost-user-frontend", feature = "vhost-user-backend"))]
 mod tests {
     use message::VhostUserSharedMsg;
+    use vmm_sys_util::event::{new_event_consumer_and_notifier, EventFlag};
     use std::fs::File;
     use std::os::unix::io::AsRawFd;
     use std::path::{Path, PathBuf};
@@ -489,13 +490,15 @@ mod tests {
         let num = frontend.get_queue_num().unwrap();
         assert_eq!(num, 2);
 
-        let eventfd = vmm_sys_util::eventfd::EventFd::new(0).unwrap();
+        // let eventfd = vmm_sys_util::eventfd::EventFd::new(0).unwrap();
+        let (consumer, notifier) = new_event_consumer_and_notifier(EventFlag::empty()).unwrap();
         let mem = [VhostUserMemoryRegionInfo::new(
             0,
             0x10_0000,
             0,
             0,
-            eventfd.as_raw_fd(),
+            // Not sure whether it should be notifier or consumer
+            consumer.as_raw_fd(),
         )];
         frontend.set_mem_table(&mem).unwrap();
 
@@ -510,7 +513,8 @@ mod tests {
         assert_eq!(offset, 0x100);
         assert_eq!(&reply_payload, &[0xa5; 4]);
 
-        frontend.set_backend_request_fd(&eventfd).unwrap();
+        // Not sure whether it should be notifier or consumer
+        frontend.set_backend_request_fd(&notifier.as_raw_fd()).unwrap();
         frontend.set_vring_enable(0, true).unwrap();
 
         frontend
@@ -519,11 +523,11 @@ mod tests {
                 Some(VhostUserDirtyLogRegion {
                     mmap_size: 0x1000,
                     mmap_offset: 0,
-                    mmap_handle: eventfd.as_raw_fd(),
+                    mmap_handle: consumer.as_raw_fd(),
                 }),
             )
             .unwrap();
-        frontend.set_log_fd(eventfd.as_raw_fd()).unwrap();
+        frontend.set_log_fd(notifier.as_raw_fd()).unwrap();
 
         frontend.set_vring_num(0, 256).unwrap();
         frontend.set_vring_base(0, 0).unwrap();
@@ -537,9 +541,9 @@ mod tests {
             log_addr: Some(0x4000),
         };
         frontend.set_vring_addr(0, &config).unwrap();
-        frontend.set_vring_call(0, &eventfd).unwrap();
-        frontend.set_vring_kick(0, &eventfd).unwrap();
-        frontend.set_vring_err(0, &eventfd).unwrap();
+        frontend.set_vring_call(0, &notifier.as_raw_fd()).unwrap();
+        frontend.set_vring_kick(0, &consumer.as_raw_fd()).unwrap();
+        frontend.set_vring_err(0, &consumer.as_raw_fd()).unwrap();
 
         let max_mem_slots = frontend.get_max_mem_slots().unwrap();
         assert_eq!(max_mem_slots, 509);

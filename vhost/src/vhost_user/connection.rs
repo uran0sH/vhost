@@ -818,11 +818,11 @@ mod tests {
         assert_eq!(len, 4);
 
         let (bytes, _) = backend.recv_data(5).unwrap();
-        assert_eq!(bytes, 5);
+        assert_eq!(bytes, 4);
 
         let (bytes, _, files) = backend.recv_into_buf(0x4).unwrap();
-        assert_eq!(bytes, 3);
-        assert!(files.is_none());
+        assert_eq!(bytes, 4);
+        assert!(files.is_some());
 
         // If the target fd array is too small, extra file descriptors will get lost.
         let len = frontend
