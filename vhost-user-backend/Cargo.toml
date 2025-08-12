@@ -13,8 +13,10 @@ xen = ["vm-memory/xen", "vhost/xen"]
 postcopy = ["vhost/postcopy", "userfaultfd"]
 
 [dependencies]
+bitflags = "2.9.1"
 libc = "0.2.39"
 log = "0.4.17"
+mio = { version = "1.0.4", features = ["os-poll", "os-ext"] }
 userfaultfd = { version = "0.8.1", optional = true }
 vhost = { path = "../vhost", version = "0.14.0", features = ["vhost-user-backend"] }
 virtio-bindings = { workspace = true }
@@ -23,7 +25,7 @@ vm-memory = { workspace = true, features = ["backend-mmap", "backend-atomic", "b
 vmm-sys-util = { workspace = true }
 
 [dev-dependencies]
-nix = { version = "0.30", features = ["fs"] }
+nix = { version = "0.30", features = ["fs", "mman"] }
 uuid = { version = "1.8.0", features=["v4"] }
 vhost = { path = "../vhost", version = "0.14.0", features = ["test-utils", "vhost-user-frontend", "vhost-user-backend"] }
 vm-memory = { workspace = true, features = ["backend-mmap", "backend-atomic"] }
