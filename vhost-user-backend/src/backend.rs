@@ -23,13 +23,13 @@ use std::io::Result;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex, RwLock};
 
+use mio::Interest;
 use vhost::vhost_user::message::{
     VhostTransferStateDirection, VhostTransferStatePhase, VhostUserProtocolFeatures,
     VhostUserSharedMsg,
 };
 use vhost::vhost_user::Backend;
 use vm_memory::bitmap::Bitmap;
-use vmm_sys_util::epoll::EventSet;
 use vmm_sys_util::eventfd::EventFd;
 
 use vhost::vhost_user::GpuBackend;
@@ -144,7 +144,7 @@ pub trait VhostUserBackend: Send + Sync {
     fn handle_event(
         &self,
         device_event: u16,
-        evset: EventSet,
+        evset: Interest,
         vrings: &[Self::Vring],
         thread_id: usize,
     ) -> Result<()>;
@@ -287,7 +287,7 @@ pub trait VhostUserBackendMut: Send + Sync {
     fn handle_event(
         &mut self,
         device_event: u16,
-        evset: EventSet,
+        evset: Interest,
         vrings: &[Self::Vring],
         thread_id: usize,
     ) -> Result<()>;
@@ -389,7 +389,7 @@ impl<T: VhostUserBackend> VhostUserBackend for Arc<T> {
     fn handle_event(
         &self,
         device_event: u16,
-        evset: EventSet,
+        evset: Interest,
         vrings: &[Self::Vring],
         thread_id: usize,
     ) -> Result<()> {
@@ -478,7 +478,7 @@ impl<T: VhostUserBackendMut> VhostUserBackend for Mutex<T> {
     fn handle_event(
         &self,
         device_event: u16,
-        evset: EventSet,
+        evset: Interest,
         vrings: &[Self::Vring],
         thread_id: usize,
     ) -> Result<()> {
@@ -570,7 +570,7 @@ impl<T: VhostUserBackendMut> VhostUserBackend for RwLock<T> {
     fn handle_event(
         &self,
         device_event: u16,
-        evset: EventSet,
+        evset: Interest,
         vrings: &[Self::Vring],
         thread_id: usize,
     ) -> Result<()> {
@@ -600,6 +600,7 @@ pub mod tests {
     use super::*;
     use crate::VringRwLock;
     use libc::EFD_NONBLOCK;
+    use mio::Interest;
     use std::sync::Mutex;
     use uuid::Uuid;
     use vm_memory::{GuestAddress, GuestMemoryAtomic, GuestMemoryMmap};
@@ -707,7 +708,7 @@ pub mod tests {
         fn handle_event(
             &mut self,
             _device_event: u16,
-            _evset: EventSet,
+            _evset: Interest,
             _vrings: &[VringRwLock],
             _thread_id: usize,
         ) -> Result<()> {
@@ -793,7 +794,7 @@ pub mod tests {
 
         let vring = VringRwLock::new(mem, 0x1000).unwrap();
         backend
-            .handle_event(0x1, EventSet::IN, &[vring], 0)
+            .handle_event(0x1, Interest::READABLE, &[vring], 0)
             .unwrap();
 
         backend.reset_device();
