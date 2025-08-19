@@ -6,6 +6,7 @@ use std::path::Path;
 use std::sync::{Arc, Barrier, Mutex};
 use std::thread;
 
+use mio::Interest;
 use uuid::Uuid;
 use vhost::vhost_user::message::{
     VhostUserConfigFlags, VhostUserHeaderFlag, VhostUserInflight, VhostUserProtocolFeatures,
@@ -13,12 +14,13 @@ use vhost::vhost_user::message::{
 };
 use vhost::vhost_user::{Backend, Frontend, Listener, VhostUserFrontend};
 use vhost::{VhostBackend, VhostUserMemoryRegionInfo, VringConfigData};
-use vhost_user_backend::{VhostUserBackendMut, VhostUserDaemon, VringRwLock};
+use vhost_user_backend::{EventSet, VhostUserBackendMut, VhostUserDaemon, VringRwLock};
 use vm_memory::{
     FileOffset, GuestAddress, GuestAddressSpace, GuestMemory, GuestMemoryAtomic, GuestMemoryMmap,
 };
-use vmm_sys_util::epoll::EventSet;
-use vmm_sys_util::eventfd::EventFd;
+use vmm_sys_util::event::{
+    new_event_consumer_and_notifier, EventConsumer, EventFlag, EventNotifier,
+};
 
 struct MockVhostBackend {
     events: u64,
@@ -105,16 +107,17 @@ impl VhostUserBackendMut for MockVhostBackend {
         vec![1, 1]
     }
 
-    fn exit_event(&self, _thread_index: usize) -> Option<EventFd> {
-        let event_fd = EventFd::new(0).unwrap();
-
-        Some(event_fd)
+    fn exit_event(&self, _thread_index: usize) -> Option<(EventConsumer, EventNotifier)> {
+        Some(
+            new_event_consumer_and_notifier(EventFlag::empty())
+                .expect("Failed to create EventConsumer and EventNotifier"),
+        )
     }
 
     fn handle_event(
         &mut self,
         _device_event: u16,
-        _evset: EventSet,
+        _evset: Interest,
         _vrings: &[VringRwLock],
         _thread_id: usize,
     ) -> Result<()> {
@@ -166,7 +169,17 @@ fn vhost_user_client(path: &Path, barrier: Arc<Barrier>) {
     frontend.set_protocol_features(proto).unwrap();
     assert!(proto.contains(VhostUserProtocolFeatures::REPLY_ACK));
 
-    let memfd = nix::sys::memfd::memfd_create("test", nix::sys::memfd::MFdFlags::empty()).unwrap();
+    // This can't work.
+    // It will cause:
+    // thread '<unnamed>' panicked at vhost-user-backend/tests/vhost-user-server.rs:188:6:
+    // called `Result::unwrap()` on an `Err` value: MmapRegion(SeekEnd(Os { code: 29, kind: NotSeekable, message: "Illegal seek" }))
+    let memfd = nix::sys::mman::shm_open(
+        "test",
+        nix::fcntl::OFlag::O_RDWR | nix::fcntl::OFlag::O_CREAT | nix::fcntl::OFlag::O_EXCL,
+        nix::sys::stat::Mode::S_IRUSR | nix::sys::stat::Mode::S_IWUSR,
+    )
+    .unwrap();
+    let _ = nix::sys::mman::shm_unlink("test");
     let file = File::from(memfd);
     file.set_len(0x100000).unwrap();
     let file_offset = FileOffset::new(file, 0);
@@ -201,10 +214,10 @@ fn vhost_user_client(path: &Path, barrier: Arc<Barrier>) {
     };
     frontend.set_vring_addr(0, &config).unwrap();
 
-    let eventfd = EventFd::new(0).unwrap();
-    frontend.set_vring_kick(0, &eventfd).unwrap();
-    frontend.set_vring_call(0, &eventfd).unwrap();
-    frontend.set_vring_err(0, &eventfd).unwrap();
+    let (consumer, notifier) = new_event_consumer_and_notifier(EventFlag::empty()).unwrap();
+    frontend.set_vring_kick(0, &consumer.as_raw_fd()).unwrap();
+    frontend.set_vring_call(0, &notifier.as_raw_fd()).unwrap();
+    frontend.set_vring_err(0, &notifier.as_raw_fd()).unwrap();
     frontend.set_vring_enable(0, true).unwrap();
 
     let buf = [0u8; 8];
@@ -289,7 +302,7 @@ fn test_vhost_user_enable() {
 
 fn vhost_user_set_inflight(path: &Path, barrier: Arc<Barrier>) {
     let mut frontend = setup_frontend(path, barrier);
-    let eventfd = EventFd::new(0).unwrap();
+    let (consumer, _notifier) = new_event_consumer_and_notifier(EventFlag::empty()).unwrap();
     // No implementation for inflight_fd yet.
     let inflight = VhostUserInflight {
         mmap_size: 0x100000,
@@ -297,8 +310,9 @@ fn vhost_user_set_inflight(path: &Path, barrier: Arc<Barrier>) {
         num_queues: 1,
         queue_size: 256,
     };
+    // This test seems invalid.
     frontend
-        .set_inflight_fd(&inflight, eventfd.as_raw_fd())
+        .set_inflight_fd(&inflight, consumer.as_raw_fd())
         .unwrap_err();
 }
 

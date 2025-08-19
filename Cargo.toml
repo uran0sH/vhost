@@ -8,6 +8,7 @@ members = [
 
 [workspace.dependencies]
 virtio-bindings = "0.2.6"
-virtio-queue = "0.16.0"
-vm-memory = "0.16.2"
-vmm-sys-util = "0.14.0"
+virtio-queue = { git = "https://github.com/uran0sh/vm-virtio", branch = "update-vm-memory" }
+vm-memory = { git = "https://github.com/rust-vmm/vm-memory", rev = "b2eaf989de2c3b9146ea7625250472501cd793fd" }
+# vm-memory = "0.16.2"
+vmm-sys-util = "0.15.0"
