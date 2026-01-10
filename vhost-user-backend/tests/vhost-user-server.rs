@@ -1,5 +1,6 @@
 use std::fs::File;
 use std::io::Result;
+use std::os::fd::FromRawFd;
 use std::os::unix::io::AsRawFd;
 use std::os::unix::net::UnixStream;
 use std::path::Path;
@@ -170,9 +171,31 @@ fn vhost_user_client(path: &Path, barrier: Arc<Barrier>) {
     frontend.set_protocol_features(proto).unwrap();
     assert!(proto.contains(VhostUserProtocolFeatures::REPLY_ACK));
 
-    let memfd = nix::sys::memfd::memfd_create("test", nix::sys::memfd::MFdFlags::empty()).unwrap();
-    let file = File::from(memfd);
+    // Generate a unique shared memory name using the process ID
+    let shm_name = format!("/vhost_test_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+
+    // Open shared memory object with read/write permissions
+    let file = unsafe {
+        // Use libc::shm_open directly since it's not exposed in std
+        let fd = libc::shm_open(
+            std::ffi::CString::new(shm_name.as_str()).unwrap().as_ptr(),
+            libc::O_CREAT | libc::O_RDWR,
+            0o600,
+        );
+        if fd < 0 {
+            let err = std::io::Error::last_os_error();
+            panic!("shm_open failed: {}", err);
+        }
+        File::from_raw_fd(fd)
+    };
+
     file.set_len(0x100000).unwrap();
+
+    // Unlink the shared memory object immediately after creation and sizing
+    // The file descriptor remains valid until closed
+    unsafe {
+        libc::shm_unlink(std::ffi::CString::new(shm_name.as_str()).unwrap().as_ptr());
+    }
     let file_offset = FileOffset::new(file, 0);
     let mem = GuestMemoryMmap::<()>::from_ranges_with_files(&[(
         GuestAddress(0x100000),
